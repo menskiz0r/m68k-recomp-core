@@ -1809,11 +1809,11 @@ static int estimate_cycles_prm(const M68KInstr *instr)
  * SAME cost the recompiled code does — otherwise the two disagree on
  * g_audio_cycle_counter, which drives audio-stamp pacing. Indexed by addr>>1
  * (68K instructions are word-aligned); 0 = not recorded. */
-static uint16_t *g_insn_cost_by_addr = NULL;   /* [0x200000] */
+static uint16_t *g_insn_cost_by_addr = NULL;   /* [GENESIS_ROM_MAX_SIZE / 2] */
 static void insn_cost_record(uint32_t addr, int cost) {
     if (!g_insn_cost_by_addr)
-        g_insn_cost_by_addr = (uint16_t *)calloc(0x200000u, sizeof(uint16_t));
-    if (g_insn_cost_by_addr && addr < 0x400000u && cost > 0 && cost < 0x10000)
+        g_insn_cost_by_addr = (uint16_t *)calloc(GENESIS_ROM_MAX_SIZE / 2, sizeof(uint16_t));
+    if (g_insn_cost_by_addr && addr < GENESIS_ROM_MAX_SIZE && cost > 0 && cost < 0x10000)
         g_insn_cost_by_addr[addr >> 1] = (uint16_t)cost;
 }
 /* Emit the sorted (addr,cost) table (called from main after codegen). */
@@ -1826,7 +1826,7 @@ void emit_insn_cost_table(FILE *f) {
     fprintf(f, "const GameInsnCost g_game_insn_costs[] = {\n");
     size_t n = 0;
     if (g_insn_cost_by_addr) {
-        for (uint32_t i = 0; i < 0x200000u; i++) {
+        for (uint32_t i = 0; i < GENESIS_ROM_MAX_SIZE / 2; i++) {
             if (g_insn_cost_by_addr[i]) {
                 fprintf(f, "{0x%06Xu,%u},", i << 1, g_insn_cost_by_addr[i]);
                 if ((++n & 7u) == 0) fprintf(f, "\n");
@@ -2693,6 +2693,9 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
             fprintf(f, "  g_cpu.A[%d] += (uint32_t)(int32_t)(int16_t)(%s);\n", areg, src_expr);
         else
             fprintf(f, "  g_cpu.A[%d] += (uint32_t)(%s);\n", areg, src_expr);
+        if (areg == 7 && instr->src_ea == ((7 << 3) | 4) && *has_sp_adjust)
+            fprintf(f, "  _sp_popped += (int32_t)(%s%s); /* ADDA immediate stack bytes */\n",
+                    sz == M68K_SIZE_W ? "(int16_t)" : "", src_expr);
         break;
     }
 
@@ -2750,6 +2753,9 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
             fprintf(f, "  g_cpu.A[%d] -= (uint32_t)(int32_t)(int16_t)(%s);\n", areg, src_expr);
         else
             fprintf(f, "  g_cpu.A[%d] -= (uint32_t)(%s);\n", areg, src_expr);
+        if (areg == 7 && instr->src_ea == ((7 << 3) | 4) && *has_sp_adjust)
+            fprintf(f, "  _sp_popped -= (int32_t)(%s%s); /* SUBA immediate stack bytes */\n",
+                    sz == M68K_SIZE_W ? "(int16_t)" : "", src_expr);
         break;
     }
 
@@ -5168,6 +5174,11 @@ bool codegen_emit(const GenesisRom *rom, const FunctionList *funcs,
                 if ((pre.mnemonic == MN_ADDQ || pre.mnemonic == MN_SUBQ) &&
                     ((pre.src_ea >> 3) & 7) == 1 && (pre.src_ea & 7) == 7 &&
                     pre.imm32 > 0) {
+                    has_sp_adjust = 1;
+                    break;
+                }
+                if ((pre.mnemonic == MN_ADDA || pre.mnemonic == MN_SUBA) &&
+                        pre.reg == 7 && pre.src_ea == ((7 << 3) | 4)) {
                     has_sp_adjust = 1;
                     break;
                 }
