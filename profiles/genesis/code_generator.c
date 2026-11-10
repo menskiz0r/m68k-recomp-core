@@ -2658,6 +2658,9 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
             fprintf(f, "  g_cpu.A[%d] += (uint32_t)(int32_t)(int16_t)(%s);\n", areg, src_expr);
         else
             fprintf(f, "  g_cpu.A[%d] += (uint32_t)(%s);\n", areg, src_expr);
+        if (areg == 7 && instr->src_ea == ((7 << 3) | 4) && *has_sp_adjust)
+            fprintf(f, "  _sp_popped += (int32_t)(%s%s); /* ADDA immediate stack bytes */\n",
+                    sz == M68K_SIZE_W ? "(int16_t)" : "", src_expr);
         break;
     }
 
@@ -2715,6 +2718,9 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
             fprintf(f, "  g_cpu.A[%d] -= (uint32_t)(int32_t)(int16_t)(%s);\n", areg, src_expr);
         else
             fprintf(f, "  g_cpu.A[%d] -= (uint32_t)(%s);\n", areg, src_expr);
+        if (areg == 7 && instr->src_ea == ((7 << 3) | 4) && *has_sp_adjust)
+            fprintf(f, "  _sp_popped -= (int32_t)(%s%s); /* SUBA immediate stack bytes */\n",
+                    sz == M68K_SIZE_W ? "(int16_t)" : "", src_expr);
         break;
     }
 
@@ -5128,6 +5134,11 @@ bool codegen_emit(const GenesisRom *rom, const FunctionList *funcs,
                 if ((pre.mnemonic == MN_ADDQ || pre.mnemonic == MN_SUBQ) &&
                     ((pre.src_ea >> 3) & 7) == 1 && (pre.src_ea & 7) == 7 &&
                     pre.imm32 > 0) {
+                    has_sp_adjust = 1;
+                    break;
+                }
+                if ((pre.mnemonic == MN_ADDA || pre.mnemonic == MN_SUBA) &&
+                        pre.reg == 7 && pre.src_ea == ((7 << 3) | 4)) {
                     has_sp_adjust = 1;
                     break;
                 }
