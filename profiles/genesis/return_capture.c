@@ -59,6 +59,47 @@ static bool invalid_before_return_pop(const M68KInstr *ins)
         || m68k_is_call(ins);
 }
 
+/*
+ * A routine that pops the caller's return address is only a "capture and take
+ * over" callee when it keeps that address and never rebuilds a normal frame.
+ * A prologue/epilogue split looks identical at the capture instruction:
+ *
+ *     movea.l (a7)+,a0        ; capture
+ *     link.w  a6,#0           ; ...but build an ordinary frame anyway
+ *     movem.l d1/a1,-(a7)
+ *     move.w  sr,-(a7)
+ *     move.l  a0,-(a7)        ; and push the address straight back
+ *     ...
+ *     rts                     ; ordinary return, frame still live
+ *
+ * The shared epilogue later pops sr/movem/unlk and returns to the caller, so the
+ * caller's own body must still be emitted. Treating that as a capture made the
+ * caller emit `push return; call; return;` and drop everything after the call
+ * (Shadowrun $052E4E is the reproducer; its six callers at $052EB0..$052FA0 were
+ * truncated, leaking the pushed return slot). Reject any routine that, right
+ * after capturing, sets up a frame or pushes to the stack again.
+ */
+static bool capture_is_takeover(const ProofContext *ctx, uint32_t pc)
+{
+    for (int i = 0; i < 8; i++) {
+        M68KInstr ins;
+        if (pc + 1 >= ctx->rom->rom_size || !m68k_decode(ctx->rom, pc, &ins))
+            return false;
+        if (ins.mnemonic == MN_LINK)
+            return false;                            /* normal frame set up   */
+        if (ins.dst_ea == ((EA_An_PRE << 3) | 7))
+            return false;                            /* pushes again          */
+        if (ins.mnemonic == MN_RTS)
+            return false;                            /* ordinary return       */
+        if (m68k_is_terminator(&ins) || ins.mnemonic == MN_JMP
+                || ins.mnemonic == MN_BRA || ins.mnemonic == MN_Bcc
+                || ins.mnemonic == MN_DBcc)
+            return true;                             /* leaves this path      */
+        pc += ins.byte_length;
+    }
+    return true;
+}
+
 static bool prove_from(ProofContext *ctx, uint32_t pc)
 {
     int node_index = -1;
@@ -91,7 +132,7 @@ static bool prove_from(ProofContext *ctx, uint32_t pc)
         goto done;
 
     if (is_return_pop(&ins)) {
-        result = true;
+        result = capture_is_takeover(ctx, pc + ins.byte_length);
         goto done;
     }
     if (invalid_before_return_pop(&ins))
