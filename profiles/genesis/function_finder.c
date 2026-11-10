@@ -31,7 +31,7 @@
 static uint32_t s_work_stack[WORK_STACK_SIZE];
 static int      s_work_top = 0;
 
-static bool addr_seen[0x400000];   /* one byte per ROM address — visited flags */
+static bool addr_seen[GENESIS_ROM_MAX_SIZE];   /* one byte per ROM address — visited flags */
 
 /* Validator-rejection counter — surfaces speculative-scan terminations
  * so misdecoded data regions show up at the end of the run. */
@@ -510,7 +510,7 @@ is_jsr_word_table_pair(const M68KInstr *prev, const M68KInstr *jsr,
 }
 
 static void push_addr(uint32_t addr) {
-    if (addr >= 0x400000 || addr_seen[addr]) return;
+    if (addr >= GENESIS_ROM_MAX_SIZE || addr_seen[addr]) return;
     if (s_work_top >= WORK_STACK_SIZE) {
         fprintf(stderr, "function_finder: work stack overflow at $%06X\n", addr);
         return;
@@ -526,7 +526,7 @@ static const GameConfig *s_ff_cfg = NULL;
 
 static void add_function_impl(FunctionList *list, uint32_t addr, bool queue,
                               uint32_t evidence) {
-    if (addr >= 0x400000) return;
+    if (addr >= GENESIS_ROM_MAX_SIZE) return;
     /* Data-gate: when a code-address oracle is loaded, never register a target
      * the disasm assembles as DATA (or a mid-instruction address). Explicit
      * seeds — vectors and game.toml extras/discovery labels — are instruction
