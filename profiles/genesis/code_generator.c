@@ -2244,6 +2244,15 @@ static void emit_instr(FILE *f, const GenesisRom *rom,
             fprintf(f, "    recomp_call_addr(%s);\n", ae);
             fprintf(f, "    g_split_sp_popped = _saved_split_sp_popped;\n");
             fprintf(f, "  }\n");
+            /* A callee reached through a pointer may return past us: Shadowrun's
+             * check-out confirm at $DA6A pops the caller's return AND the
+             * dispatcher's return, then rts's past both. A7 tells us how many
+             * slots it really consumed. When it took more than its own, put the
+             * final rts slot back and unwind that many C frames, exactly as the
+             * guest did. Ordinary callees leave A7 at the slot, so this is a
+             * no-op for them. */
+            fprintf(f, "  { int _tail_k = (int)((g_cpu.A[7] - _jsr_slot_sp_%06X) / 4u);\n", addr);
+            fprintf(f, "    if (_tail_k >= 2) { g_cpu.A[7] += 4u; g_rte_pending = _tail_k; } }\n");
         } else {
             codegen_diag_record(CGD_TODO_DYNAMIC_JSR_UNSUPPORTED, addr,
                                 instr->words[0], instr->mnemonic,
